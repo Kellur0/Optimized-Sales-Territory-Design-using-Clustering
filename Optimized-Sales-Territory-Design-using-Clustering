@@ -1,0 +1,178 @@
+
+# Sales Territory Optimization using SimpleMaps US ZIP Dataset
+
+# Install needed packages if missing
+import sys
+import subprocess
+
+packages = ["pandas", "numpy", "scikit-learn", "folium", "openpyxl"]
+
+for package in packages:
+    try:
+        __import__(package.replace("-", "_"))
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Import libraries
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.cluster import KMeans
+import folium
+from IPython.display import display
+
+# 1. Load dataset
+
+df = pd.read_csv("uszips.csv")
+
+print("Dataset loaded successfully!")
+print("Rows:", df.shape[0])
+print("Columns:", df.shape[1])
+print(df.head())
+
+# 2. Clean and filter data
+
+# Use California as the hypothetical sales region
+df = df[df["state_id"] == "CA"].copy()
+
+# Keep only useful columns
+needed_cols = ["zip", "city", "state_id", "lat", "lng", "population"]
+df = df[needed_cols].copy()
+
+# Remove missing values
+df = df.dropna(subset=["lat", "lng", "population"])
+
+# Remove places with zero or missing population
+df = df[df["population"] > 0].copy()
+
+# 3. Create sales potential
+
+# Hypothetical sales potential based on population
+np.random.seed(42)
+df["sales_potential"] = df["population"] * np.random.uniform(0.8, 1.2, len(df))
+
+# Normalize sales potential
+scaler = MinMaxScaler()
+df["sales_potential_norm"] = scaler.fit_transform(df[["sales_potential"]])
+
+# 4. Run K-Means clustering
+
+num_territories = 6
+
+features = df[["lat", "lng", "sales_potential_norm"]]
+
+kmeans = KMeans(
+    n_clusters=num_territories,
+    random_state=42,
+    n_init=10
+)
+
+df["territory"] = kmeans.fit_predict(features) + 1
+
+# 5. Assign sales representatives
+
+sales_reps = [f"Sales Rep {i}" for i in range(1, num_territories + 1)]
+
+territory_summary = (
+    df.groupby("territory")
+    .agg(
+        customer_count=("zip", "count"),
+        total_sales_potential=("sales_potential", "sum"),
+        avg_lat=("lat", "mean"),
+        avg_lng=("lng", "mean")
+    )
+    .reset_index()
+)
+
+territory_summary["sales_rep"] = sales_reps
+
+df = df.merge(
+    territory_summary[["territory", "sales_rep"]],
+    on="territory",
+    how="left"
+)
+
+# 6. Show territory summary
+
+print("\nTerritory Summary:")
+display(territory_summary)
+
+# 7. Export CSV and Excel files
+
+csv_output = "sales_territory_assignments.csv"
+excel_output = "sales_territory_assignments.xlsx"
+
+df.to_csv(csv_output, index=False)
+df.to_excel(excel_output, index=False)
+
+print("\nFiles exported successfully:")
+print(csv_output)
+print(excel_output)
+
+# 8. Create interactive Folium map
+
+center_lat = df["lat"].mean()
+center_lng = df["lng"].mean()
+
+territory_map = folium.Map(
+    location=[center_lat, center_lng],
+    zoom_start=6
+)
+
+colors = [
+    "red", "blue", "green", "purple", "orange",
+    "darkred", "lightred", "beige", "darkblue",
+    "darkgreen", "cadetblue", "darkpurple"
+]
+
+for _, row in df.iterrows():
+    color = colors[int(row["territory"] - 1) % len(colors)]
+
+    popup_text = f"""
+    <b>ZIP:</b> {row['zip']}<br>
+    <b>City:</b> {row['city']}<br>
+    <b>State:</b> {row['state_id']}<br>
+    <b>Territory:</b> {row['territory']}<br>
+    <b>Sales Rep:</b> {row['sales_rep']}<br>
+    <b>Population:</b> {int(row['population'])}<br>
+    <b>Sales Potential:</b> {round(row['sales_potential'], 2)}
+    """
+
+    folium.CircleMarker(
+        location=[row["lat"], row["lng"]],
+        radius=4,
+        popup=folium.Popup(popup_text, max_width=300),
+        color=color,
+        fill=True,
+        fill_color=color,
+        fill_opacity=0.7
+    ).add_to(territory_map)
+
+# Add territory center markers
+for _, row in territory_summary.iterrows():
+    folium.Marker(
+        location=[row["avg_lat"], row["avg_lng"]],
+        popup=(
+            f"<b>Territory {row['territory']}</b><br>"
+            f"{row['sales_rep']}<br>"
+            f"Customers: {row['customer_count']}<br>"
+            f"Sales Potential: {round(row['total_sales_potential'], 2)}"
+        ),
+        icon=folium.Icon(color="black", icon="briefcase", prefix="fa")
+    ).add_to(territory_map)
+
+map_output = "sales_territory_map.html"
+territory_map.save(map_output)
+
+print("\nInteractive map created successfully:")
+print(map_output)
+
+# Display map inside notebook
+display(territory_map)
+
+# 9. Attribution
+
+print("\nData Source Attribution:")
+print("SimpleMaps US ZIP Codes Database")
+print("https://simplemaps.com/data/us-zips")
+print("Used for educational purposes.")
